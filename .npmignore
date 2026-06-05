@@ -1,0 +1,8 @@
+PLAN.md
+tsconfig.json
+README.md
+.gitignore
+node_modules/
+*.tmp
+.pi
+.claude

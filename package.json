@@ -1,0 +1,41 @@
+{
+  "name": "@danielmeneses/pi-llama-swap",
+  "version": "0.1.0",
+  "description": "Pi extension: llama-swap provider with dynamic model discovery",
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "main": "index.ts",
+  "directories": {
+    "lib": "lib"
+  },
+  "dependencies": {
+    "undici-types": "^6.21.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danielmeneses/pi-llama-swap.git"
+  },
+  "keywords": [
+    "pi-extension",
+    "pi-package",
+    "pi"
+  ],
+  "author": "Daniel Meneses",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/danielmeneses/pi-llama-swap/issues"
+  },
+  "homepage": "https://github.com/danielmeneses/pi-llama-swap#readme"
+}
