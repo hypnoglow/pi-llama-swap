@@ -6,6 +6,7 @@ Pi coding agent extension that registers a **llama-swap** provider and discovers
 
 - Injects provider `llama-swap` with models from `GET /v1/models`
 - Resolves per-model context from llama-swap APIs (`/v1/models`, `/running`) with 256K default — see [Context window](#context-window-per-model)
+- Enables image input for models whose `/props` response advertises `vision`, `image`, or `multimodal` support
 - Uses OpenAI Chat Completions API (`openai-completions`) for streaming
 - Reads optional config from `~/.pi/agent/pi-llama-swap.json` to override defaults
 

@@ -28,6 +28,12 @@ interface LlamaServerProps {
 	default_generation_settings?: {
 		n_ctx?: number;
 	};
+	capabilities?: unknown;
+	modalities?: unknown;
+	input?: unknown;
+	vision?: unknown;
+	supports_vision?: unknown;
+	supports_images?: unknown;
 }
 
 /**
@@ -44,6 +50,23 @@ function toPositiveInt(value: unknown): number | undefined {
 		return n > 0 ? n : undefined;
 	}
 	return undefined;
+}
+
+/**
+ * Returns whether a model property advertises image/vision input.
+ * It checks a boolean `vision` and lists such as `capabilities: ["vision"]` or
+ * `modalities: ["text", "image"]`.
+ */
+function supportsImageInput(props: LlamaServerProps): boolean {
+	if (props.vision === true || props.supports_vision === true || props.supports_images === true) {
+		return true;
+	}
+
+	const hasImageCapability = (value: unknown): boolean =>
+		Array.isArray(value) &&
+		value.some((item) => typeof item === "string" && /^(?:image|images|vision|multimodal)$/i.test(item));
+
+	return hasImageCapability(props.capabilities) || hasImageCapability(props.modalities) || hasImageCapability(props.input);
 }
 
 /**
@@ -140,22 +163,60 @@ export function parseContextFromCmd(cmd: string): number | undefined {
 }
 
 /**
+ * Fetches and parses a `/props` response.
+ * @param url - Absolute `/props` URL.
+ * @param headers - Optional request headers.
+ * @returns Props or undefined when the endpoint is unavailable or invalid.
+ */
+async function fetchProps(url: URL | string, headers: Record<string, string> = { Accept: "application/json" }): Promise<LlamaServerProps | undefined> {
+	try {
+		const response = await fetch(url, { method: "GET", headers });
+		if (!response.ok) {
+			return undefined;
+		}
+		return (await response.json()) as LlamaServerProps;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
  * Fetches n_ctx from a running llama-server upstream `/props` endpoint.
  * @param proxyUrl - Upstream base URL (e.g. `http://localhost:5802`).
  * @returns Context window or undefined.
  */
 async function fetchUpstreamContext(proxyUrl: string): Promise<number | undefined> {
-	const url = `${proxyUrl.replace(/\/$/, "")}/props`;
-	try {
-		const response = await fetch(url, { method: "GET", headers: { Accept: "application/json" } });
-		if (!response.ok) {
-			return undefined;
-		}
-		const props = (await response.json()) as LlamaServerProps;
-		return toPositiveInt(props.default_generation_settings?.n_ctx);
-	} catch {
-		return undefined;
+	const props = await fetchProps(`${proxyUrl.replace(/\/$/, "")}/props`);
+	return toPositiveInt(props?.default_generation_settings?.n_ctx);
+}
+
+/**
+ * Fetches `/props` for every configured model.
+ * A failed or unsupported request is omitted from the result.
+ */
+async function loadPropsForModels(
+	serverOrigin: string,
+	entries: OpenAIModelEntry[],
+	apiKey?: string,
+): Promise<Map<string, LlamaServerProps>> {
+	const result = new Map<string, LlamaServerProps>();
+	const headers: Record<string, string> = { Accept: "application/json" };
+	if (apiKey) {
+		headers.Authorization = `Bearer ${apiKey}`;
 	}
+
+	await Promise.all(
+		entries.map(async (entry) => {
+			const url = new URL(`${serverOrigin.replace(/\/$/, "")}/props`);
+			url.searchParams.set("model", entry.id);
+			const props = await fetchProps(url, headers);
+			if (props) {
+				result.set(entry.id, props);
+			}
+		}),
+	);
+
+	return result;
 }
 
 /**
@@ -226,7 +287,11 @@ export async function buildModelLimits(
 	entries: OpenAIModelEntry[],
 	config: LlamaSwapConfig,
 	overrides?: Record<string, number>,
-): Promise<{ contextByModel: Map<string, number>; maxTokensByModel: Map<string, number> }> {
+): Promise<{
+	contextByModel: Map<string, number>;
+	maxTokensByModel: Map<string, number>;
+	imageInputByModel: Map<string, boolean>;
+}> {
 	const contextByModel = new Map<string, number>();
 	const maxTokensByModel = new Map<string, number>();
 
@@ -253,8 +318,12 @@ export async function buildModelLimits(
 			contextByModel.set(id, ctx);
 		}
 	}
+	const propsByModel = await loadPropsForModels(serverOrigin, entries, config.apiKey);
+	const imageInputByModel = new Map(
+		[...propsByModel].filter(([, props]) => supportsImageInput(props)).map(([id]) => [id, true] as const),
+	);
 
-	return { contextByModel, maxTokensByModel };
+	return { contextByModel, maxTokensByModel, imageInputByModel };
 }
 
 /**

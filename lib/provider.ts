@@ -25,12 +25,14 @@ let hasRegisteredProvider = false;
  * @param entries - Models from GET /v1/models.
  * @param contextByModel - Resolved context window per model id.
  * @param maxTokensByModel - Resolved max output tokens per model id.
+ * @param imageInputByModel - Image-input support reported by GET /props per model id.
  * @returns Pi-compatible model configs.
  */
 export function mapOpenAIModelsToPi(
 	entries: OpenAIModelEntry[],
 	contextByModel: Map<string, number>,
 	maxTokensByModel: Map<string, number>,
+	imageInputByModel: Map<string, boolean>,
 ): ProviderModelConfig[] {
 	return entries.map((model) => {
 		const contextWindow = resolveContextWindow(model.id, contextByModel);
@@ -41,7 +43,7 @@ export function mapOpenAIModelsToPi(
 			id: model.id,
 			name,
 			reasoning: false,
-			input: ["text"] as ("text" | "image")[],
+			input: (imageInputByModel.has(model.id) ? ["text", "image"] : ["text"]) as ("text" | "image")[],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow,
 			maxTokens,
@@ -96,8 +98,12 @@ export async function refreshProvider(
 
 	try {
 		const entries = await fetchModels(baseUrl, config.apiKey);
-		const { contextByModel, maxTokensByModel } = await buildModelLimits(entries, config, config.contextOverrides);
-		const models = mapOpenAIModelsToPi(entries, contextByModel, maxTokensByModel);
+		const { contextByModel, maxTokensByModel, imageInputByModel } = await buildModelLimits(
+			entries,
+			config,
+			config.contextOverrides,
+		);
+		const models = mapOpenAIModelsToPi(entries, contextByModel, maxTokensByModel, imageInputByModel);
 
 		if (hasRegisteredProvider) {
 			pi.unregisterProvider(PROVIDER_ID);
