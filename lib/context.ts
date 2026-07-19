@@ -24,11 +24,18 @@ interface RunningResponse {
 	running?: RunningProcess[];
 }
 
+/** Chat template capabilities from /props. */
+interface ChatTemplateCaps {
+	supports_preserve_reasoning?: boolean;
+	[key: string]: unknown;
+}
+
 /** llama-server /props response (subset). */
 interface LlamaServerProps {
 	default_generation_settings?: {
 		n_ctx?: number;
 	};
+	chat_template_caps?: ChatTemplateCaps;
 	capabilities?: unknown;
 	modalities?: unknown;
 	input?: unknown;
@@ -51,6 +58,14 @@ function toPositiveInt(value: unknown): number | undefined {
 		return n > 0 ? n : undefined;
 	}
 	return undefined;
+}
+
+/**
+ * Returns whether a model's chat template supports reasoning (thinking).
+ * Checks `chat_template_caps.supports_preserve_reasoning` from /props.
+ */
+function supportsReasoning(props: LlamaServerProps): boolean {
+	return props.chat_template_caps?.supports_preserve_reasoning === true;
 }
 
 /**
@@ -333,6 +348,7 @@ export async function buildModelLimits(
 	contextByModel: Map<string, number>;
 	maxTokensByModel: Map<string, number>;
 	imageInputByModel: Map<string, boolean>;
+	reasoningByModel: Map<string, boolean>;
 }> {
 	const contextByModel = new Map<string, number>();
 	const maxTokensByModel = new Map<string, number>();
@@ -364,8 +380,11 @@ export async function buildModelLimits(
 	const imageInputByModel = new Map(
 		[...propsByModel].filter(([, props]) => supportsImageInput(props)).map(([id]) => [id, true] as const),
 	);
+	const reasoningByModel = new Map(
+		[...propsByModel].filter(([, props]) => supportsReasoning(props)).map(([id]) => [id, true] as const),
+	);
 
-	return { contextByModel, maxTokensByModel, imageInputByModel };
+	return { contextByModel, maxTokensByModel, imageInputByModel, reasoningByModel };
 }
 
 /**

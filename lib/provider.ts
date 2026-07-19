@@ -33,6 +33,7 @@ export function mapOpenAIModelsToPi(
 	contextByModel: Map<string, number>,
 	maxTokensByModel: Map<string, number>,
 	imageInputByModel: Map<string, boolean>,
+	reasoningByModel: Map<string, boolean>,
 ): ProviderModelConfig[] {
 	return entries.map((model) => {
 		const contextWindow = resolveContextWindow(model.id, contextByModel);
@@ -42,7 +43,7 @@ export function mapOpenAIModelsToPi(
 		return {
 			id: model.id,
 			name,
-			reasoning: false,
+			reasoning: reasoningByModel.has(model.id),
 			input: (imageInputByModel.has(model.id) ? ["text", "image"] : ["text"]) as ("text" | "image")[],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow,
@@ -98,12 +99,12 @@ export async function refreshProvider(
 
 	try {
 		const entries = await fetchModels(baseUrl, config.apiKey);
-		const { contextByModel, maxTokensByModel, imageInputByModel } = await buildModelLimits(
+		const { contextByModel, maxTokensByModel, imageInputByModel, reasoningByModel } = await buildModelLimits(
 			entries,
 			config,
 			config.contextOverrides,
 		);
-		const models = mapOpenAIModelsToPi(entries, contextByModel, maxTokensByModel, imageInputByModel);
+		const models = mapOpenAIModelsToPi(entries, contextByModel, maxTokensByModel, imageInputByModel, reasoningByModel);
 
 		if (hasRegisteredProvider) {
 			pi.unregisterProvider(PROVIDER_ID);
