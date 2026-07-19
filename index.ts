@@ -18,10 +18,26 @@ import { refreshProvider, PROVIDER_ID } from "./lib/provider.js";
 export default async function llamaSwapExtension(pi: ExtensionAPI): Promise<void> {
 	const config = await loadConfig();
 	const result = await refreshProvider(pi, config, { isInitial: true });
+	let contextRefreshedForModel: string | undefined;
 
 	if (result.error) {
 		console.warn(`[llama-swap] ${result.error}`);
 	}
+
+	// A llama-swap upstream is started by the first provider request. Refresh
+	// once its response headers arrive so `/running` exposes the proxy and we
+	// can read the actual llama-server `/props` n_ctx for subsequent requests.
+	pi.on("after_provider_response", async (_event, ctx) => {
+		const model = ctx.model;
+		if (!model || model.provider !== PROVIDER_ID || model.id === contextRefreshedForModel) {
+			return;
+		}
+
+		const refresh = await refreshProvider(pi, await loadConfig());
+		if (!refresh.error) {
+			contextRefreshedForModel = model.id;
+		}
+	});
 
 	pi.registerCommand("llama-swap-set-context-length", {
 		description: "Set or clear context window override for the current model",
