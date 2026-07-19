@@ -9,6 +9,7 @@ import { buildServerOrigin } from "./url.js";
 export const DEFAULT_CONTEXT_WINDOW = 262_144;
 
 const DEFAULT_MAX_TOKENS = 8192;
+const REQUEST_TIMEOUT_MS = 5_000;
 
 /** Running process entry from GET /running. */
 interface RunningProcess {
@@ -62,9 +63,17 @@ function supportsImageInput(props: LlamaServerProps): boolean {
 		return true;
 	}
 
-	const hasImageCapability = (value: unknown): boolean =>
-		Array.isArray(value) &&
-		value.some((item) => typeof item === "string" && /^(?:image|images|vision|multimodal)$/i.test(item));
+	const hasImageCapability = (value: unknown): boolean => {
+		if (Array.isArray(value)) {
+			return value.some((item) => typeof item === "string" && /^(?:image|images|vision|multimodal)$/i.test(item));
+		}
+		if (value && typeof value === "object") {
+			return Object.entries(value).some(
+				([key, supported]) => /^(?:image|images|vision|multimodal)$/i.test(key) && supported === true,
+			);
+		}
+		return false;
+	};
 
 	return hasImageCapability(props.capabilities) || hasImageCapability(props.modalities) || hasImageCapability(props.input);
 }
@@ -169,14 +178,18 @@ export function parseContextFromCmd(cmd: string): number | undefined {
  * @returns Props or undefined when the endpoint is unavailable or invalid.
  */
 async function fetchProps(url: URL | string, headers: Record<string, string> = { Accept: "application/json" }): Promise<LlamaServerProps | undefined> {
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 	try {
-		const response = await fetch(url, { method: "GET", headers });
+		const response = await fetch(url, { method: "GET", headers, signal: controller.signal });
 		if (!response.ok) {
 			return undefined;
 		}
 		return (await response.json()) as LlamaServerProps;
 	} catch {
 		return undefined;
+	} finally {
+		clearTimeout(timeout);
 	}
 }
 
@@ -191,27 +204,50 @@ async function fetchUpstreamContext(proxyUrl: string): Promise<number | undefine
 }
 
 /**
- * Fetches `/props` for every configured model.
- * A failed or unsupported request is omitted from the result.
+ * Fetches `/props` only from already-running llama-server processes.
+ * Querying llama-swap's `/props?model=…` for every configured model can start
+ * model swaps, which blocks Pi startup while those requests wait to complete.
  */
-async function loadPropsForModels(
-	serverOrigin: string,
-	entries: OpenAIModelEntry[],
-	apiKey?: string,
-): Promise<Map<string, LlamaServerProps>> {
+async function loadPropsForRunningModels(serverOrigin: string, apiKey?: string): Promise<Map<string, LlamaServerProps>> {
 	const result = new Map<string, LlamaServerProps>();
 	const headers: Record<string, string> = { Accept: "application/json" };
 	if (apiKey) {
 		headers.Authorization = `Bearer ${apiKey}`;
 	}
 
+	let response: Response;
+	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+		try {
+			response = await fetch(`${serverOrigin.replace(/\/$/, "")}/running`, {
+				method: "GET",
+				headers,
+				signal: controller.signal,
+			});
+		} finally {
+			clearTimeout(timeout);
+		}
+	} catch {
+		return result;
+	}
+	if (!response.ok) {
+		return result;
+	}
+
+	let payload: RunningResponse;
+	try {
+		payload = (await response.json()) as RunningResponse;
+	} catch {
+		return result;
+	}
+
 	await Promise.all(
-		entries.map(async (entry) => {
-			const url = new URL(`${serverOrigin.replace(/\/$/, "")}/props`);
-			url.searchParams.set("model", entry.id);
-			const props = await fetchProps(url, headers);
+		(payload.running ?? []).map(async (proc) => {
+			if (!proc.model || !proc.proxy) return;
+			const props = await fetchProps(`${proc.proxy.replace(/\/$/, "")}/props`);
 			if (props) {
-				result.set(entry.id, props);
+				result.set(proc.model, props);
 			}
 		}),
 	);
@@ -238,7 +274,13 @@ export async function loadContextFromRunning(
 
 	let response: Response;
 	try {
-		response = await fetch(url, { method: "GET", headers });
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+		try {
+			response = await fetch(url, { method: "GET", headers, signal: controller.signal });
+		} finally {
+			clearTimeout(timeout);
+		}
 	} catch {
 		return result;
 	}
@@ -318,7 +360,7 @@ export async function buildModelLimits(
 			contextByModel.set(id, ctx);
 		}
 	}
-	const propsByModel = await loadPropsForModels(serverOrigin, entries, config.apiKey);
+	const propsByModel = await loadPropsForRunningModels(serverOrigin, config.apiKey);
 	const imageInputByModel = new Map(
 		[...propsByModel].filter(([, props]) => supportsImageInput(props)).map(([id]) => [id, true] as const),
 	);

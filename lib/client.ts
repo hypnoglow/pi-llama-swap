@@ -4,6 +4,8 @@
 
 import type { OpenAIModelEntry, OpenAIModelsListResponse } from "./types.js";
 
+const REQUEST_TIMEOUT_MS = 5_000;
+
 /** Error thrown when llama-swap API request fails. */
 export class LlamaSwapClientError extends Error {
 	/** HTTP status when the server responded with an error. */
@@ -42,12 +44,24 @@ export async function fetchModels(
 		headers.Authorization = `Bearer ${apiKey}`;
 	}
 
+	const controller = new AbortController();
+	const abort = () => controller.abort();
+	if (signal?.aborted) {
+		abort();
+	} else {
+		signal?.addEventListener("abort", abort, { once: true });
+	}
+	const timeout = setTimeout(abort, REQUEST_TIMEOUT_MS);
+
 	let response: Response;
 	try {
-		response = await fetch(url, { method: "GET", headers, signal });
+		response = await fetch(url, { method: "GET", headers, signal: controller.signal });
 	} catch (err) {
 		const msg = err instanceof Error ? err.message : String(err);
 		throw new LlamaSwapClientError(`Cannot reach llama-swap at ${url}: ${msg}`);
+	} finally {
+		clearTimeout(timeout);
+		signal?.removeEventListener("abort", abort);
 	}
 
 	if (!response.ok) {
